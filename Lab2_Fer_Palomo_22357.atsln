@@ -1,22 +1,202 @@
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Atmel Studio Solution File, Format Version 11.00
-VisualStudioVersion = 14.0.23107.0
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{18226A42-8477-4023-8AD2-40C49DA407C9}") = "Lab2_Fer_Palomo_22357", "Lab2_Fer_Palomo_22357\Lab2_Fer_Palomo_22357.asmproj", "{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}"
-EndProject
-Global
-	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|AVR = Debug|AVR
-		Release|AVR = Release|AVR
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Debug|AVR.ActiveCfg = Debug|AVR
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Debug|AVR.Build.0 = Debug|AVR
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Release|AVR.ActiveCfg = Release|AVR
-		{59B1D629-9DCC-43ED-A0FD-8AB0E4D622AB}.Release|AVR.Build.0 = Release|AVR
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-EndGlobal
+// Laboratorio2_Fernando_Palomo_22357
+// Laboratorio 2 finalizado
+;------------------------------------------------------------------------------
+; Encabezado
+;------------------------------------------------------------------------------
+; Universidad del valle de Guatemala
+; IE2023 Programación de Microcontroladores
+; Author : Fernando José Pérez Palomo - 22357
+; Proyecto: Laboratorio_2.asm
+; Descripción: display 7 segmentos, ánodo común, contador de 0 a F con alarma
+; Hardware: ATMega328P 
+
+.include "M328PDEF.inc"
+
+.cseg
+.org 0x00
+//-----------------------------------------------------------------------------
+; Configuración de la pila
+//-----------------------------------------------------------------------------
+	LDI R16, LOW(RAMEND)    ; Carga el valor bajo de la memoria RAM en R16
+	OUT SPL, R16            ; Configura el puntero de pila (Stack Pointer) en la parte baja de la memoria RAM
+	LDI R17, HIGH(RAMEND)   ; Carga el valor alto de la memoria RAM en R17
+	OUT SPH, R17            ; Configura el puntero de pila (Stack Pointer) en la parte alta de la memoria RAM
+
+//-----------------------------------------------------------------------------
+; CONFIGURACIÓN
+//-----------------------------------------------------------------------------
+
+SETUP:
+	
+	LDI R25, 0x00           ; Inicializa R25 con 0
+	LDI R16, (1 << CLKPCE)  ; Habilita la escritura del registro de control del reloj
+	STS CLKPR, R16          ; Escribe en el registro de control del reloj para configurar el prescaler
+	LDI R16, 0b0000_0100    ; Configura el prescaler a 16 (fcpu = 1MHz)
+	STS CLKPR, R16          ; Escribe en el registro de control del reloj
+	LDI R16, 0x00           ; Inicializa R16 con 0
+	OUT PORTD, R16          ; Configura el puerto D como salida
+	STS UCSR0B, R16         ; Deshabilita el módulo USART
+
+	; Entradas
+	LDI R16, 0b0000_0011    ; Configura R16 para activar pull-up en los botones
+	OUT PORTC, R16          ; Aplica la configuración al puerto C
+	LDI R16, 0b0000_0011    ; Configura R16 para definir entradas en PC0 y PC1
+	OUT DDRC, R16           ; Aplica la configuración al registro de dirección del puerto C
+	; Salidas
+	LDI R16, 0b0111_1111    ; Configura R16 para definir salidas en PD0 a PD6
+	OUT DDRD, R16           ; Aplica la configuración al registro de dirección del puerto D
+	LDI R16, 0b0000_1111    ; Configura R16 para definir salidas en PB0 a PB3
+	OUT DDRB, R16           ; Aplica la configuración al registro de dirección del puerto B
+
+	CALL Timer0              ; Llama a la subrutina Timer0
+
+
+//-----------------------------------------------------------------------------
+// Tabla  de valores de display de 7 segmentos (ánodo común)
+//-----------------------------------------------------------------------------v
+	
+	TABLA7SEG:  .DB 0b0100_0000, 0b0111_1001, 0b0010_0100, 0b0011_0000, 0b0001_1001, 0b0001_0010, 0b0000_0010, 0b0111_1000, 0b0000_0000, 0b0001_1000, 0b0000_1000, 0b0000_0011, 0b0100_0110, 0b0010_0001, 0b0000_0110, 0b0000_1110
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// LOOP
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+	LDI R17, 0              ; Inicializa R17 con 0
+	LDI ZH, HIGH(TABLA7SEG << 1)  ; Carga el byte alto de la dirección de la tabla de 7 segmentos
+	LDI ZL, LOW(TABLA7SEG << 1)   ; Carga el byte bajo de la dirección de la tabla de 7 segmentos
+	ADD ZL, R17             ; Suma R17 al byte bajo de la dirección de la tabla de 7 segmentos
+	LPM R16, Z             ; Lee el byte de la tabla de 7 segmentos en la dirección calculada
+	OUT PORTD, R16          ; Muestra el valor en el puerto D
+
+LOOP:
+	IN R16, PINC            ; Lee el puerto C
+    SBRS R16, PC0           ; Compara si el bit con el puerto PC0 está en 1, va a Disp7seg_positivo
+    RJMP Disp7seg_positivo
+    SBRS R16, PC1           ; Compara si el bit con el puerto PC1 está en 1, va a Disp7seg_negativo
+    RJMP Disp7seg_negativo
+    CALL contador_leds     ; Llama a la subrutina contador_leds
+    RJMP LOOP              ; Salta a la etiqueta LOOP
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// Aumentar display
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Disp7seg_positivo:
+    
+    ; Antirrebote
+    LDI R16, 100            ; Inicializa el contador de antirrebote
+    delay_disp_pos:
+        DEC R16              ; Decrementa el contador
+        BRNE delay_disp_pos  ; Salta si el contador no ha llegado a cero
+        CALL contador_leds   ; Llama a la subrutina contador_leds
+        SBIS PINC, PC0       ; Lee nuevamente el pin, salta si el bit PC0 está en 1
+        RJMP Disp7seg_positivo
+    CPI R17, 15             ; Compara si el contador ya llegó al límite
+    BREQ LOOP               ; Salta a la etiqueta LOOP si el contador alcanzó el límite
+    INC R17                 ; Incrementa el contador
+    LDI ZH, HIGH(TABLA7SEG << 1) ; Carga el byte alto de la dirección de la tabla de 7 segmentos
+    LDI ZL, LOW(TABLA7SEG << 1)  ; Carga el byte bajo de la dirección de la tabla de 7 segmentos
+    ADD ZL, R17             ; Suma R17 al byte bajo de la dirección de la tabla de 7 segmentos
+    LPM R16, Z              ; Lee el byte de la tabla de 7 segmentos en la dirección calculada
+    OUT PORTD, R16          ; Muestra el valor en el puerto D
+    RJMP LOOP               ; Salta a la etiqueta LOOP
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// Decrementar display
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Disp7seg_negativo:
+    
+    LDI R16, 100            ; Inicializa el contador de antirrebote
+    delay_disp_neg:
+        DEC R16						; Decrementa el contador
+        BRNE delay_disp_neg			; Salta si el contador no ha llegado a cero
+        CALL contador_leds			; Llama a la subrutina contador_leds
+        SBIS PINC, PC1				 ; Lee nuevamente el pin, salta si el bit PC1 está en 1
+        RJMP Disp7seg_negativo
+    CPI R17, 0						 ; Compara si el contador ya llegó al límite
+    BREQ LOOP						 ; Salta a la etiqueta LOOP si el contador alcanzó el límite
+    DEC R17							 ; Decrementa el contador
+    LDI ZH, HIGH(TABLA7SEG << 1)	 ; Carga el byte alto de la dirección de la tabla de 7 segmentos
+    LDI ZL, LOW(TABLA7SEG << 1)		 ; Carga el byte bajo de la dirección de la tabla de 7 segmentos
+    ADD ZL, R17						 ; Suma R17 al byte bajo de la dirección de la tabla de 7 segmentos
+    LPM R16, Z						 ; Lee el byte de la tabla de 7 segmentos en la dirección calculada
+    OUT PORTD, R16					 ; Muestra el valor en el puerto D
+    RJMP LOOP						 ; Salta a la etiqueta LOOP
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// Contador de leds de 4 bits
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+contador_leds:
+
+	contador_leds:
+
+    IN R16, TIFR0           ; Lee el registro de banderas del temporizador 0
+    CPI R16, (1<<TOV0)      ; Compara si la bandera de desbordamiento del temporizador 0 está activa
+    BRNE contador_leds      ; Salta a la etiqueta contador_leds si la bandera de desbordamiento no está activa
+
+    ; Reloj de 1 seg (ajustadamente 0.85 seg)
+    LDI R16, 245            ; Carga el valor para el temporizador
+    OUT TCNT0, R16          ; Carga el valor inicial del temporizador
+
+    SBI TIFR0, TOV0          ; Limpia la bandera de desbordamiento del temporizador 0
+
+    INC R26                  ; Incrementa el contador R26
+    CPI R26, 55             ; Compara si el contador R26 alcanzó el límite
+    BRNE contador_leds      ; Salta a la etiqueta contador_leds si el contador R26 no alcanzó el límite
+
+    CLR R26                  ; Reinicia el contador R26
+
+    INC R25                  ; Incrementa el contador R25
+    LDI R16, 1               ; Carga el valor 1 en R16
+    ADD R16, R17             ; Suma R17 a R16
+    CP R25, R16              ; Compara R25 con R16
+    BRNE Comparador         ; Salta a la etiqueta Comparador si no son iguales
+    CLR R25                  ; Reinicia el contador R25
+    OUT PORTB, R25           ; Muestra el valor en el puerto B
+    CALL Alarma_ciclo_completo ; Llama a la subrutina Alarma_ciclo_completo
+    RET                      ; Retorna de la subrutina contador_leds
+
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// Comparador de display con contador de leds
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Comparador:
+
+    OUT PORTB, R25          ; Muestra el valor del contador de leds en el puerto B
+    RET
+
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+// Alarma de 1 ciclo completo
+//----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// Dependiendo de cuál sea el valor del display, el contador llegará a ese valor y terminando el ciclo se activará la alarma
+
+Alarma_ciclo_completo:
+    
+    LDI R19, 0b0111_1111    ; Carga el valor 0b0111_1111 en R19
+    OUT DDRD, R19           ; Configura el puerto D como salida
+    IN R16, PIND            ; Lee el registro de entrada del puerto D
+    LDI R19, 0b1000_0000    ; Carga el valor 0b1000_0000 en R19
+    EOR R16, R19            ; Realiza una operación XOR entre R16 y R19
+    LDI R19, 0b1111_1111    ; Carga el valor 0b1111_1111 en R19
+    OUT DDRD, R19           ; Configura el puerto D como entrada
+    OUT PORTD, R16          ; Muestra el valor en el puerto D
+    RET                     ; Retorna de la subrutina Alarma_ciclo_completo
+
+
+//-----------------------------------------------------------------------------
+// Subrutina para inicializar TIMER0
+//-----------------------------------------------------------------------------
+
+//Inicio de timer 0
+Timer0:
+    LDI R16, (1 << CS02) | (1 << CS00)  ; Configura el prescaler a 1024
+    OUT TCCR0B, R16
+
+    LDI R16, 100                           ; Carga el valor de desbordamiento
+    OUT TCNT0, R16                          ; Carga el valor inicial del contador
+    RET
+
